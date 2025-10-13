@@ -1,8 +1,30 @@
-/target
-/dist
+# Python 虚拟环境
+venv/
+env/
+*.pyc
+__pycache__/
+
+# RVC 相关
+rvc_models/
+
+# Rust/WASM 构建产物
+target/
+dist/
 Cargo.lock
+
+# 临时文件
+*.tmp
+*.log
 .DS_Store
+
+# IDE
+.vscode/
+.idea/
 *.swp
 *.swo
-*~
-11_RVC曼波模型/
+
+# 系统文件
+Thumbs.db
+# RVC 模型文件（过大，需自行准备）
+11_RVC/*.pth
+11_RVC/*.index

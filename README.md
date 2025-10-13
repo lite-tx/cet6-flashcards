@@ -1,155 +1,285 @@
-# CET6 背单词工具
+# CET6 智能单词学习工具 🎓
 
-一个使用 Rust + Yew + WebAssembly 构建的现代化网页背单词应用。
+一个基于 Rust + Yew 的现代化 CET6 单词学习应用，集成 Live2D 看板娘和 RVC 语音朗读功能。
 
-## 功能特性
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)
+![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 
-- 📚 **单词卡片** - 点击卡片翻转查看释义
-- 🎯 **学习进度** - 自动保存学习进度到浏览器本地存储
-- ✅ **已掌握标记** - 标记已经掌握的单词
-- ⭐ **难词本** - 标记难记的单词方便复习
-- 🎲 **随机模式** - 随机选择单词进行复习
-- 📊 **统计信息** - 实时显示学习统计
-- 📱 **响应式设计** - 支持手机、平板和桌面设备
-- 🎨 **精美UI** - 渐变背景和流畅动画
+## ✨ 主要特性
 
-## 技术栈
+### 📚 智能学习系统
+- **动态复习池**：根据掌握程度智能调整复习内容
+- **自适应算法**：正确率越高，复习量自动增加
+- **单词流动机制**：难词连续答对 3 次自动流入已掌握库
+- **记忆衰减**：长时间未复习的单词会降低熟练度
 
-- **Rust** - 系统编程语言
-- **Yew** - Rust 的前端框架
-- **WebAssembly** - 高性能 Web 运行时
-- **Serde** - JSON 序列化/反序列化
+### 🎤 RVC 语音朗读
+- **点击朗读**：点击 Live2D 看板娘即可朗读当前单词
+- **RVC 模型支持**：使用自定义 RVC 模型进行语音转换
+- **智能降级**：RVC 不可用时自动回退到 Edge-TTS
+- **GPU 加速**：支持 NVIDIA GPU 加速推理
 
-## 前置要求
+### 🎨 Live2D 互动
+- **实时提示**：学习进度、答题结果实时显示
+- **眼动追踪**：模型会跟随鼠标移动
+- **多种表情**：根据学习状态显示不同表情
 
-1. 安装 Rust：
+### 📊 学习统计
+- 已掌握单词数量
+- 难词本统计  
+- 复习池状态
+- 答题正确率
+
+## 🚀 快速开始
+
+### 前置要求
+
+#### 前端（必需）
+- Rust 1.70+
+- Trunk: `cargo install trunk`
+- wasm32 target: `rustup target add wasm32-unknown-unknown`
+
+#### 后端（RVC 功能，可选）
+- Python 3.10+
+- NVIDIA GPU（推荐，CPU 也可用但较慢）
+- CUDA 12.1+（如使用 GPU）
+
+### 安装步骤
+
+#### 1. 克隆仓库
+
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+git clone https://github.com/lite-tx/cet6-flashcards.git
+cd cet6-flashcards
 ```
 
-2. 安装 Trunk（Yew 构建工具）：
-```bash
-cargo install trunk
-```
-
-3. 添加 WebAssembly 目标：
-```bash
-rustup target add wasm32-unknown-unknown
-```
-
-## 快速开始
-
-### 开发模式
-
-在项目目录下运行：
+#### 2. 启动前端
 
 ```bash
-trunk serve --open
-```
+# 开发模式（热重载）
+trunk serve
 
-应用将在 `http://127.0.0.1:8080` 启动并自动在浏览器中打开。
-
-### 生产构建
-
-构建优化版本：
-
-```bash
+# 生产构建
 trunk build --release
 ```
 
-构建产物将生成在 `dist/` 目录中，可以直接部署到任何静态网站托管服务。
+前端将在 `http://localhost:8080` 启动。
 
-### 部署到 GitHub Pages
+#### 3. 启动 RVC 后端（可选）
 
-1. 构建项目：
+如果需要 RVC 语音朗读功能：
+
 ```bash
-trunk build --release --public-url /CET6/
+# 创建虚拟环境
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 安装兼容版本的 PyTorch（重要！）
+pip install torch==2.3.0+cu121 torchaudio==2.3.0+cu121 \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+# 启动 RVC 服务器
+python rvc_server.py
 ```
 
-2. 将 `dist/` 目录内容推送到 `gh-pages` 分支
+RVC 服务将在 `http://localhost:8765` 启动。
 
-3. 在 GitHub 仓库设置中启用 Pages
+### 4. 准备 RVC 模型（可选）
 
-## 使用说明
+将你的 RVC 模型文件放置到 `11_RVC/` 目录：
+
+```
+11_RVC/
+├── your_model.pth              # RVC 模型文件
+└── your_index.index            # 索引文件（可选）
+```
+
+修改 `rvc_server.py` 中的路径：
+
+```python
+RVC_MODEL_PATH = "11_RVC/your_model.pth"
+RVC_INDEX_PATH = "11_RVC/your_index.index"
+```
+
+## 📖 使用说明
 
 ### 基本操作
 
-- **查看释义**：点击单词卡片翻转查看释义和短语
-- **切换单词**：使用"上一个"/"下一个"按钮导航
-- **标记掌握**：点击"✓ 已掌握"标记熟练掌握的单词
-- **添加难词**：点击"★ 难词"将难记的单词加入难词本
-- **随机复习**：点击"🎲 随机"随机跳转到一个单词
+- **← →** : 切换生词
+- **↑ ↓** : 切换复习单词
+- **点击卡片** : 翻转查看释义
+- **✓ 已掌握** : 标记为已掌握
+- **★ 难词** : 加入难词本
+- **点击 Live2D** : 朗读当前单词
 
-### 进度保存
+### 学习流程
 
-学习进度会自动保存在浏览器的 LocalStorage 中，包括：
-- 当前学习位置
-- 已掌握的单词列表
-- 难词本列表
+1. **学习生词**：浏览单词，标记已掌握或难词
+2. **进入复习**：当词库达到 20 个单词后自动生成复习池
+3. **答题测试**：根据中文释义拼写单词
+4. **智能调整**：系统根据正确率调整下轮复习量
 
-关闭浏览器后再次打开会自动恢复进度。
+### 复习策略
 
-### 清除进度
+- **正确率 100%**：下轮复习量 ×2
+- **正确率 ≥50%**：下轮复习量 +1  
+- **正确率 <50%**：下轮复习量 ÷2（最少 1 个）
 
-如果需要重新开始，可以在浏览器开发者工具中清除 LocalStorage：
-1. 按 F12 打开开发者工具
-2. 进入 Application/应用 标签
-3. 找到 Local Storage
-4. 删除 `cet6_progress` 键
+## ⚙️ 配置说明
 
-## 项目结构
+### 前端配置
+
+在 `index.html` 中可以配置：
+
+```javascript
+// RVC 服务器地址
+const RVC_SERVER_URL = 'http://localhost:8765';
+
+// 是否使用 RVC（false 使用浏览器 TTS）
+const USE_RVC = true;
+```
+
+### Live2D 模型配置
+
+在 `index.html` 中修改 Live2D 模型路径：
+
+```javascript
+models: [
+    {
+        path: 'models/你的模型/model.json',
+        scale: 0.2,
+        position: [240, 260]
+    }
+]
+```
+
+## 🔧 故障排除
+
+### RVC 相关问题
+
+#### PyTorch 版本不兼容
+
+**症状**：`weights_only` 错误或 `'tuple' object has no attribute 'dtype'`
+
+**解决**：使用 PyTorch 2.3.0
+```bash
+pip install torch==2.3.0+cu121 torchaudio==2.3.0+cu121 \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+```
+
+#### CORS 错误
+
+**症状**：浏览器提示跨域错误
+
+**解决**：
+- 确保 RVC 服务器在运行
+- 检查 `RVC_SERVER_URL` 配置
+- 重启 RVC 服务器
+
+#### 没有声音
+
+**检查清单**：
+1. RVC 服务器是否运行：`curl http://localhost:8765/`
+2. 浏览器控制台是否有错误
+3. 尝试设置 `USE_RVC = false` 使用浏览器 TTS
+
+### 前端相关问题
+
+#### Trunk 构建失败
+
+```bash
+# 重新安装 trunk
+cargo install trunk --force
+
+# 添加 wasm 目标
+rustup target add wasm32-unknown-unknown
+```
+
+#### Live2D 不显示
+
+- 检查模型路径是否正确
+- 打开浏览器控制台查看错误
+- 确保模型文件完整
+
+## 📁 项目结构
 
 ```
-CET6/
-├── Cargo.toml              # Rust 项目配置
-├── index.html              # HTML 模板（包含 CSS）
-├── 4-CET6-顺序.json        # 单词数据
+cet6-flashcards/
 ├── src/
-│   ├── main.rs            # 主应用逻辑
-│   └── models.rs          # 数据模型定义
-└── README.md              # 项目说明
+│   ├── main.rs              # 主应用逻辑
+│   └── models.rs            # 数据模型定义
+├── 11_RVC/                  # RVC 模型文件（需自行准备）
+├── models/                  # Live2D 模型
+│   ├── UG/                 # 示例模型
+│   └── shizuku/            # 示例模型
+├── index.html              # 前端页面
+├── rvc_server.py           # RVC 后端服务
+├── requirements.txt        # Python 依赖
+├── Cargo.toml             # Rust 依赖
+└── README.md              # 本文档
 ```
 
-## 数据格式
+## 🛠️ 技术栈
 
-单词数据采用 JSON 格式：
+### 前端
+- **Rust** - 系统编程语言
+- **Yew** - Rust 的 React-like 框架
+- **WebAssembly** - 高性能 Web 应用
+- **oh-my-live2d** - Live2D 渲染库
 
-```json
-{
-  "word": "abandon",
-  "translations": [
-    {
-      "translation": "放弃",
-      "type": "v"
-    }
-  ],
-  "phrases": [
-    {
-      "phrase": "abandon hope",
-      "translation": "放弃希望"
-    }
-  ]
-}
-```
+### 后端
+- **Python 3.10+** - 脚本语言
+- **FastAPI** - 现代 Web 框架
+- **edge-tts** - 微软 Edge TTS
+- **rvc-python** - RVC 推理库
+- **PyTorch 2.3.0** - 深度学习框架
 
-## 浏览器兼容性
+## 📈 性能优化
 
-支持所有现代浏览器：
-- Chrome/Edge 90+
-- Firefox 88+
-- Safari 14+
+- 首次 RVC 转换：10-30秒（模型加载）
+- 后续转换：1-3秒
+- Edge-TTS 降级：1-2秒
+- GPU 加速可显著提升速度
 
-## 性能优化
+## 🗺️ 开发路线图
 
-- 使用 WebAssembly 提供接近原生的性能
-- 懒加载单词数据
-- CSS 动画硬件加速
-- 生产构建启用代码压缩和优化
+- [ ] 支持更多 TTS 引擎（VITS、GPT-SoVITS）
+- [ ] 添加单词发音音标显示
+- [ ] 支持自定义学习计划
+- [ ] 添加学习统计图表
+- [ ] 支持单词本导入/导出
+- [ ] 移动端适配优化
 
-## 许可证
-
-MIT License
-
-## 贡献
+## 🤝 贡献指南
 
 欢迎提交 Issue 和 Pull Request！
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+## 📄 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+
+## 🙏 致谢
+
+- [Yew](https://yew.rs/) - Rust WebAssembly 框架
+- [oh-my-live2d](https://oml2d.com/) - Live2D 集成方案
+- [edge-tts](https://github.com/rany2/edge-tts) - 免费 TTS 服务
+- [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) - 语音转换技术
+
+## 📧 联系方式
+
+- GitHub: [@lite-tx](https://github.com/lite-tx)
+- Issues: [提交问题](https://github.com/lite-tx/cet6-flashcards/issues)
+
+---
+
+⭐ 如果这个项目对你有帮助，请给个 Star！

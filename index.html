@@ -278,47 +278,6 @@
             border: 2px solid #90CAF9;
         }
 
-        .mode-indicator {
-            color: rgba(255, 255, 255, 0.9);
-            font-size: 1.1rem;
-            margin-top: 10px;
-            padding: 10px 20px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 20px;
-            display: inline-block;
-        }
-
-        .keyboard-hints {
-            margin-top: 30px;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            text-align: center;
-        }
-
-        .keyboard-hints p {
-            font-weight: 600;
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.1rem;
-        }
-
-        .keyboard-hints ul {
-            list-style: none;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-            flex-wrap: wrap;
-        }
-
-        .keyboard-hints li {
-            padding: 8px 16px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 8px;
-            font-size: 0.95rem;
-        }
 
         button:disabled {
             cursor: not-allowed;
@@ -335,6 +294,7 @@
         .quiz-mode, .quiz-result {
             padding: 40px;
             text-align: center;
+            outline: none;
         }
 
         .quiz-hint {
@@ -651,6 +611,203 @@
                     console.error('❌ 加载单词数据失败:', err);
                 });
             // ==================== 随机提问功能结束 ====================
+
+            // ==================== TTS 语音朗读功能 ====================
+            // RVC 服务器配置
+            const RVC_SERVER_URL = 'http://localhost:8765';
+            const USE_RVC = true;  // 设为 false 使用浏览器内置 TTS
+
+            // 创建语音合成对象（fallback）
+            const synth = window.speechSynthesis;
+            let currentVoice = null;
+            let currentAudio = null;  // 当前播放的音频对象
+
+            // 初始化语音
+            function initVoice() {
+                const voices = synth.getVoices();
+                // 优先选择英文语音
+                currentVoice = voices.find(voice => voice.lang.startsWith('en-')) || voices[0];
+                console.log('✅ 选择的语音:', currentVoice?.name, currentVoice?.lang);
+            }
+
+            // 等待语音列表加载
+            if (synth.onvoiceschanged !== undefined) {
+                synth.onvoiceschanged = initVoice;
+            }
+            initVoice();
+
+            // RVC TTS 朗读函数
+            async function speakWithRVC(text) {
+                try {
+                    console.log('🎤 使用 RVC 朗读:', text);
+
+                    // 停止当前播放的音频
+                    if (currentAudio) {
+                        currentAudio.pause();
+                        currentAudio = null;
+                    }
+
+                    // 显示加载提示
+                    if (window.oml2dInstance?.tipsMessage) {
+                        window.oml2dInstance.tipsMessage('正在生成语音...', 2000);
+                    }
+
+                    // 调用 RVC API
+                    const response = await fetch(`${RVC_SERVER_URL}/tts`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            text: text,
+                            rate: '+0%',
+                            pitch: '+0Hz'
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`RVC 服务器错误: ${response.status}`);
+                    }
+
+                    // 获取音频 blob
+                    const audioBlob = await response.blob();
+                    const audioUrl = URL.createObjectURL(audioBlob);
+
+                    // 创建并播放音频
+                    currentAudio = new Audio(audioUrl);
+
+                    currentAudio.onplay = () => {
+                        console.log('🔊 开始播放 RVC 音频');
+                        if (window.oml2dInstance?.tipsMessage) {
+                            window.oml2dInstance.tipsMessage(`正在朗读: ${text}`, 2000);
+                        }
+                    };
+
+                    currentAudio.onended = () => {
+                        console.log('✅ RVC 朗读完成');
+                        URL.revokeObjectURL(audioUrl);
+                        currentAudio = null;
+                    };
+
+                    currentAudio.onerror = (error) => {
+                        console.error('❌ 音频播放错误:', error);
+                        URL.revokeObjectURL(audioUrl);
+                        currentAudio = null;
+                        if (window.oml2dInstance?.tipsMessage) {
+                            window.oml2dInstance.tipsMessage('播放出错了～', 2000);
+                        }
+                    };
+
+                    await currentAudio.play();
+
+                } catch (error) {
+                    console.error('❌ RVC 朗读失败:', error);
+                    console.log('🔄 回退到浏览器 TTS');
+
+                    if (window.oml2dInstance?.tipsMessage) {
+                        window.oml2dInstance.tipsMessage('RVC 服务不可用，使用浏览器 TTS', 3000);
+                    }
+
+                    // 回退到浏览器内置 TTS
+                    speakWithBrowser(text);
+                }
+            }
+
+            // 浏览器内置 TTS 朗读函数
+            function speakWithBrowser(text) {
+                // 取消当前正在播放的语音
+                synth.cancel();
+
+                // 创建新的语音合成实例
+                const utterance = new SpeechSynthesisUtterance(text);
+
+                // 设置语音参数
+                if (currentVoice) {
+                    utterance.voice = currentVoice;
+                }
+                utterance.lang = 'en-US';
+                utterance.rate = 0.9;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+
+                // 播放语音
+                synth.speak(utterance);
+                console.log('🔊 正在朗读 (浏览器 TTS):', text);
+
+                // 显示提示
+                if (window.oml2dInstance?.tipsMessage) {
+                    window.oml2dInstance.tipsMessage(`正在朗读: ${text}`, 2000);
+                }
+
+                // 监听朗读完成事件
+                utterance.onend = () => {
+                    console.log('✅ 朗读完成');
+                };
+
+                utterance.onerror = (event) => {
+                    console.error('❌ 朗读出错:', event.error);
+                    if (window.oml2dInstance?.tipsMessage) {
+                        window.oml2dInstance.tipsMessage('朗读出错了～', 2000);
+                    }
+                };
+            }
+
+            // TTS 朗读函数（主入口）
+            window.speakWord = function() {
+                // 直接从 DOM 中获取当前显示的单词
+                const wordElement = document.querySelector('.word');
+                const currentWord = wordElement?.textContent?.trim();
+
+                if (!currentWord || currentWord === '没有单词了！' || currentWord === '加载中...') {
+                    console.warn('⚠️ 没有当前单词可朗读');
+                    if (window.oml2dInstance?.tipsMessage) {
+                        window.oml2dInstance.tipsMessage('当前没有单词哦～', 2000);
+                    }
+                    return;
+                }
+
+                console.log('📖 从 DOM 读取到的单词:', currentWord);
+
+                // 根据配置选择 TTS 方式
+                if (USE_RVC) {
+                    speakWithRVC(currentWord);
+                } else {
+                    speakWithBrowser(currentWord);
+                }
+            };
+
+            // 为 Live2D 添加点击事件监听
+            setTimeout(() => {
+                // 查找 Live2D 的 canvas 元素
+                const canvas = document.querySelector('#oml2d-canvas');
+
+                if (canvas) {
+                    canvas.style.cursor = 'pointer';
+                    canvas.addEventListener('click', () => {
+                        console.log('🖱️ Live2D 被点击了！');
+                        window.speakWord();
+                    });
+                    console.log('✅ Live2D 点击事件已绑定，点击小人即可朗读当前单词！');
+                } else {
+                    console.warn('⚠️ 未找到 Live2D Canvas，尝试延迟绑定...');
+                    // 如果还没有加载，再等待一段时间
+                    setTimeout(() => {
+                        const canvas = document.querySelector('#oml2d-canvas');
+                        if (canvas) {
+                            canvas.style.cursor = 'pointer';
+                            canvas.addEventListener('click', () => {
+                                console.log('🖱️ Live2D 被点击了！');
+                                window.speakWord();
+                            });
+                            console.log('✅ Live2D 点击事件已绑定（延迟），点击小人即可朗读当前单词！');
+                        }
+                    }, 3000);
+                }
+            }, 2000);
+
+            // 也可以直接调用 speakWord() 来测试
+            console.log('💡 可以在控制台输入 speakWord() 立即测试朗读功能');
+            // ==================== TTS 功能结束 ====================
         });
     </script>
 </body>

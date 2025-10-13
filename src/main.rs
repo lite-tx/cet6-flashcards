@@ -4,11 +4,30 @@ use gloo_net::http::Request;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use web_sys::KeyboardEvent;
+use std::cell::RefCell;
 
 mod models;
 use models::{AppState, Word, WordStats, CycleStats, L2DMessage};
 
+// 全局变量用于存储当前单词，供 JS 调用
+thread_local! {
+    static CURRENT_WORD: RefCell<Option<String>> = RefCell::new(None);
+}
+
+// 导出给 JS 的函数：获取当前单词
+#[wasm_bindgen]
+pub fn get_current_word() -> Option<String> {
+    CURRENT_WORD.with(|word| word.borrow().clone())
+}
+
+// 导出给 JS 的函数：设置当前单词
+#[wasm_bindgen]
+pub fn set_current_word(word: String) {
+    CURRENT_WORD.with(|w| *w.borrow_mut() = Some(word));
+}
+
 const STORAGE_KEY: &str = "cet6_app_state_v2";
+const MIN_REVIEW_POOL_SIZE: usize = 20;
 
 // --- Actions for Reducer ---
 #[derive(Debug, Clone)]
@@ -318,64 +337,52 @@ impl Reducible for AppState {
 
 // 生成动态复习库
 fn generate_review_pool(state: &mut AppState) {
-    // 计算目标数量
-    let mut mastered_count = (state.mastered_words.len() as f32 * 0.05).ceil() as usize;
-    let mut difficult_count = (state.difficult_words.len() as f32 * 0.28).ceil() as usize;
-    let target_count = mastered_count + difficult_count;
+    // 1. 获取可供复习的单词列表 (排除缓存池)
+    let mut available_mastered: Vec<_> = state.mastered_words.iter()
+        .filter(|word| !state.cache_pool.contains(word))
+        .map(|word| (word.clone(), state.word_stats.get(word).map_or(0, |s| s.last_review_timestamp)))
+        .collect();
+    available_mastered.sort_by_key(|&(_, time)| time);
 
-    // 应用限制
-    let total_marked = state.mastered_words.len() + state.difficult_words.len();
-    let max_by_total = (state.all_words.len() as f32 * 0.33).ceil() as usize;
-    let max_by_marked = (total_marked as f32 * 0.5).ceil() as usize;
-    let max_allowed = max_by_total.min(max_by_marked);
+    let mut available_difficult: Vec<_> = state.difficult_words.iter()
+        .filter(|word| !state.cache_pool.contains(word))
+        .map(|word| (word.clone(), state.word_stats.get(word).map_or(0, |s| s.last_review_timestamp)))
+        .collect();
+    available_difficult.sort_by_key(|&(_, time)| time);
 
-    if target_count > max_allowed && target_count > 0 {
-        // 按比例缩放
-        let ratio = max_allowed as f32 / target_count as f32;
-        mastered_count = (mastered_count as f32 * ratio).ceil() as usize;
-        difficult_count = (difficult_count as f32 * ratio).ceil() as usize;
+    // 2. 检查可复习单词总数是否达到最低要求
+    if available_mastered.len() + available_difficult.len() < MIN_REVIEW_POOL_SIZE {
+        send_l2d_message(&format!("可选复习单词不足{}个，请继续学习生词！", MIN_REVIEW_POOL_SIZE));
+        state.dynamic_review_pool.clear();
+        state.dynamic_review_index = 0;
+        return;
     }
 
-    // 根据上次复习时间排序，选择最久未复习的单词
-    let mut mastered_with_time: Vec<_> = state.mastered_words.iter()
-        .map(|word| {
-            let last_review = state.word_stats.get(word)
-                .map(|s| s.last_review_timestamp)
-                .unwrap_or(0);
-            (word.clone(), last_review)
-        })
-        .collect();
-    mastered_with_time.sort_by_key(|&(_, time)| time);
+    // 3. 确定复习池的目标大小
+    let pool_target_size = state.review_pool_target_size.max(MIN_REVIEW_POOL_SIZE);
 
-    let mut difficult_with_time: Vec<_> = state.difficult_words.iter()
-        .map(|word| {
-            let last_review = state.word_stats.get(word)
-                .map(|s| s.last_review_timestamp)
-                .unwrap_or(0);
-            (word.clone(), last_review)
-        })
-        .collect();
-    difficult_with_time.sort_by_key(|&(_, time)| time);
+    // 4. 根据新规则确定难词和已掌握单词的数量
+    let difficult_quota = (pool_target_size as f32 * 0.7).ceil() as usize;
+    let actual_difficult_count = difficult_quota.min(available_difficult.len());
+    
+    let remaining_spots = pool_target_size.saturating_sub(actual_difficult_count);
+    let actual_mastered_count = remaining_spots.min(available_mastered.len());
 
-    // 构建动态复习库
+    // 5. 构建动态复习库
     let mut new_pool = Vec::new();
 
-    // 添加已掌握库的单词
-    for (word, _) in mastered_with_time.iter().take(mastered_count) {
+    // 添加难词
+    for (word, _) in available_difficult.iter().take(actual_difficult_count) {
         new_pool.push(word.clone());
-
-        // 应用衰减机制
-        if let Some(stats) = state.word_stats.get_mut(word) {
-            stats.consecutive_correct_answers =
-                calculate_decayed_count(stats.consecutive_correct_answers, stats.last_review_timestamp);
-        }
     }
 
-    // 添加难词库的单词
-    for (word, _) in difficult_with_time.iter().take(difficult_count) {
+    // 添加已掌握的单词
+    for (word, _) in available_mastered.iter().take(actual_mastered_count) {
         new_pool.push(word.clone());
-
-        // 应用衰减机制
+    }
+    
+    // 对新生成的复习池应用衰减机制
+    for word in &new_pool {
         if let Some(stats) = state.word_stats.get_mut(word) {
             stats.consecutive_correct_answers =
                 calculate_decayed_count(stats.consecutive_correct_answers, stats.last_review_timestamp);
@@ -489,11 +496,47 @@ fn app() -> Html {
         });
     }
 
+    // 自动聚焦逻辑：在复习模式下，输入框始终保持焦点
+    {
+        let input_ref = input_ref.clone();
+        let show_answer = show_answer.clone();
+        let current_mode = current_mode.clone();
+        use_effect_with((*show_answer, *current_mode == "review"), move |(show_answer, is_review)| {
+            if *is_review && !*show_answer {
+                // 未显示答案时聚焦输入框
+                if let Some(element) = input_ref.cast::<web_sys::HtmlInputElement>() {
+                    let _ = element.focus();
+                }
+            }
+            || ()
+        });
+    }
+
+    // 显示答案后，自动聚焦到结果区域以接收键盘事件
+    {
+        let show_answer = show_answer.clone();
+        let current_mode = current_mode.clone();
+        use_effect_with((*show_answer, *current_mode == "review"), move |(show_answer, is_review)| {
+            if *is_review && *show_answer {
+                // 显示答案后，查找并聚焦结果区域
+                if let Some(window) = web_sys::window() {
+                    if let Some(document) = window.document() {
+                        if let Some(result_div) = document.query_selector(".quiz-result").ok().flatten() {
+                            if let Some(element) = result_div.dyn_ref::<web_sys::HtmlElement>() {
+                                let _ = element.focus();
+                            }
+                        }
+                    }
+                }
+            }
+            || ()
+        });
+    }
+
     // 键盘事件处理
     {
-        let app_state = app_state.clone();
         let current_mode = current_mode.clone();
-        use_effect_with((), move |_| {
+        use_effect_with(app_state.clone(), move |app_state| {
             let document = web_sys::window().unwrap().document().unwrap();
             let app_state = app_state.clone();
             let current_mode = current_mode.clone();
@@ -516,13 +559,21 @@ fn app() -> Html {
                     }
                     "ArrowUp" => {
                         event.prevent_default();
-                        current_mode.set("review".to_string());
-                        app_state.dispatch(AppAction::PrevReviewWord);
+                        if app_state.dynamic_review_pool.len() < MIN_REVIEW_POOL_SIZE {
+                            send_l2d_message(&format!("复习池单词不足{}个，请继续学习生词！", MIN_REVIEW_POOL_SIZE));
+                        } else {
+                            current_mode.set("review".to_string());
+                            app_state.dispatch(AppAction::PrevReviewWord);
+                        }
                     }
                     "ArrowDown" => {
                         event.prevent_default();
-                        current_mode.set("review".to_string());
-                        app_state.dispatch(AppAction::NextReviewWord);
+                        if app_state.dynamic_review_pool.len() < MIN_REVIEW_POOL_SIZE {
+                            send_l2d_message(&format!("复习池单词不足{}个，请继续学习生词！", MIN_REVIEW_POOL_SIZE));
+                        } else {
+                            current_mode.set("review".to_string());
+                            app_state.dispatch(AppAction::NextReviewWord);
+                        }
                     }
                     _ => {}
                 }
@@ -576,6 +627,19 @@ fn app() -> Html {
         })
     };
 
+    let next_question = {
+        let show_answer = show_answer.clone();
+        let user_input = user_input.clone();
+        let app_state = app_state.clone();
+        Callback::from(move |_| {
+            if !app_state.is_locked {
+                show_answer.set(false);
+                user_input.set(String::new());
+                app_state.dispatch(AppAction::NextReviewWord);
+            }
+        })
+    };
+
     let submit_answer = {
         let app_state = app_state.clone();
         let user_input = user_input.clone();
@@ -599,19 +663,19 @@ fn app() -> Html {
 
     let on_keypress = {
         let submit = submit_answer.clone();
+        let next = next_question.clone();
+        let show_answer = show_answer.clone();
         Callback::from(move |e: web_sys::KeyboardEvent| {
             if e.key() == "Enter" {
-                submit.emit(web_sys::MouseEvent::new("click").unwrap());
+                e.prevent_default();
+                if *show_answer {
+                    // 如果已经显示答案，则跳转到下一题
+                    next.emit(web_sys::MouseEvent::new("click").unwrap());
+                } else {
+                    // 如果未显示答案，则提交答案
+                    submit.emit(web_sys::MouseEvent::new("click").unwrap());
+                }
             }
-        })
-    };
-
-    let next_question = {
-        let show_answer = show_answer.clone();
-        let user_input = user_input.clone();
-        Callback::from(move |_| {
-            show_answer.set(false);
-            user_input.set(String::new());
         })
     };
 
@@ -633,6 +697,11 @@ fn app() -> Html {
     } else {
         app_state.all_words.get(app_state.new_words_index)
     };
+
+    // 更新全局当前单词，供 JS 调用
+    if let Some(word) = current_word {
+        set_current_word(word.word.clone());
+    }
 
     let is_quiz_mode = *current_mode == "review";
 
@@ -716,10 +785,6 @@ fn app() -> Html {
 
     html! {
         <div class="container">
-            <div class="header">
-                
-            </div>
-
             <div class="stats">
                 <div class="stat-card">
                     <div class="stat-value">{app_state.mastered_words.len()}</div>
@@ -763,7 +828,7 @@ fn app() -> Html {
                                         placeholder="输入单词..."
                                         value={(*user_input).clone()}
                                         oninput={on_input_change}
-                                        onkeypress={on_keypress}
+                                        onkeydown={on_keypress.clone()}
                                         disabled={buttons_disabled}
                                     />
                                     <button
@@ -776,7 +841,7 @@ fn app() -> Html {
                                     </button>
                                 </div>
                             } else {
-                                <div class="quiz-result">
+                                <div class="quiz-result" tabindex="0" onkeydown={on_keypress}>
                                     <div class="result-title">{"拼写对比"}</div>
                                     <div style="width: 100%; max-width: 600px; margin: 20px auto;">
                                         {compute_diff(&user_input, &word.word)}
@@ -787,7 +852,7 @@ fn app() -> Html {
                                         disabled={buttons_disabled}
                                         style={format!("opacity: {}; margin-top: 20px;", button_opacity)}
                                     >
-                                        {"下一题"}
+                                        {"下一题 (Enter)"}
                                     </button>
                                 </div>
                             }

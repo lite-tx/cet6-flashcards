@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CET6 背单词工具</title>
     <link data-trunk rel="copy-file" href="4-CET6-顺序.json" />
+    <link data-trunk rel="copy-dir" href="models" />
     <style>
         * {
             margin: 0;
@@ -17,11 +18,14 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .container {
             max-width: 800px;
-            margin: 0 auto;
+            width: 100%;
         }
 
         .header {
@@ -269,6 +273,58 @@
             opacity: 0.9;
         }
 
+        .card.cached {
+            background: linear-gradient(135deg, #E3F2FD 0%, #F5F9FC 100%);
+            border: 2px solid #90CAF9;
+        }
+
+        .mode-indicator {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.1rem;
+            margin-top: 10px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        .keyboard-hints {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            text-align: center;
+        }
+
+        .keyboard-hints p {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .keyboard-hints ul {
+            list-style: none;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+
+        .keyboard-hints li {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
         .flip-hint {
             text-align: center;
             color: #999;
@@ -384,9 +440,218 @@
                 font-size: 0.9rem;
             }
         }
+        .oml2d-stage{position:fixed;right:0;bottom:0;z-index:2147483647}
     </style>
 </head>
 <body>
     <div id="app"></div>
+
+    <!-- Live2D 看板娘 - 使用CDN版本 -->
+    <script src="https://unpkg.com/oh-my-live2d@latest"></script>
+    <script>
+        console.log('准备初始化 OML2D...');
+
+        // 等待 Yew 应用渲染完成的函数
+        function waitForYewApp() {
+            return new Promise((resolve) => {
+                // 检查 .container 元素是否存在（Yew 的主容器）
+                const checkInterval = setInterval(() => {
+                    const container = document.querySelector('.container');
+                    if (container) {
+                        console.log('✅ Yew 应用已渲染');
+                        clearInterval(checkInterval);
+                        // 再等待 500ms 确保 Yew 完全稳定
+                        setTimeout(resolve, 500);
+                    }
+                }, 100);
+            });
+        }
+
+        window.addEventListener('load', async () => {
+            console.log('页面加载完成，等待 Yew 应用渲染...');
+
+            // 等待 Yew 渲染完成
+            await waitForYewApp();
+
+            console.log('开始初始化 OML2D');
+
+            try {
+                // 直接初始化，不需要 parentElement
+                window.oml2dInstance = OML2D.loadOml2d({
+                    mobileDisplay: true,
+                    dockedPosition: 'right',  // 显示在右侧
+                    primaryColor: '#667eea',
+                    sayHello: true,
+                    models: [
+                        {
+                            path: 'models/UG/ugofficial.model3.json',
+                            scale: 0.2,
+                            position: [240, 260],
+                            stageStyle: {
+                                width: 400,
+                                height: 450
+                            }
+                        }
+                    ],
+                    statusBar: {
+                        disable: false,
+                        transitionTime: 800
+                    },
+                    menus: {
+                        disable: true,
+                        items: [
+                            {
+                                id: 'rest',
+                                icon: 'icon-rest',
+                                title: '休息',
+                                onClick: (oml2d) => oml2d.stageSlideOut()
+                            },
+                            {
+                                id: 'about',
+                                icon: 'icon-about',
+                                title: '关于',
+                                onClick: () => window.open('https://oml2d.com')
+                            }
+                        ]
+                    },
+                    tips: {
+                        style: {
+                            top: "150px"
+                        },
+                        welcomeTips: {
+                            message: {
+                                daybreak: '早安，新的一天开始学习吧',
+                                morning: '上午好，保持专注',
+                                noon: '中午了，休息后继续',
+                                afternoon: '下午好，继续加油',
+                                dusk: '傍晚了，今天学习得怎么样？',
+                                night: '晚上好，夜间学习效率更高',
+                                lateNight: '夜深了，注意休息',
+                                weeHours: '凌晨了，该休息了'
+                            },
+                            duration: 3000
+                        },
+                        copyTips: {
+                            message: ['已复制']
+                        }
+                    }
+                });
+
+                console.log('OML2D 实例:', window.oml2dInstance);
+
+                // 监听加载事件
+                if (window.oml2dInstance && window.oml2dInstance.onLoad) {
+                    window.oml2dInstance.onLoad(() => {
+                        console.log('✅ 模型加载完成！');
+                        console.log('💡 视线跟踪已自动启用，移动鼠标试试看！');
+                    });
+                }
+
+                if (window.oml2dInstance && window.oml2dInstance.onError) {
+                    window.oml2dInstance.onError((error) => {
+                        console.error('❌ 模型加载错误:', error);
+                    });
+                }
+
+                console.log('✅ OML2D 初始化成功');
+
+                // 检查 OML2D Canvas 是否创建成功
+                setTimeout(() => {
+                    const canvas = document.querySelector('#oml2d-canvas');
+                    if (canvas) {
+                        console.log('✅ Live2D 模型加载成功！右下角应该能看到模型');
+                    } else {
+                        console.warn('⚠️ Live2D Canvas 未找到，模型可能加载失败');
+                    }
+                }, 2000);
+
+            } catch (error) {
+                console.error('❌ 初始化 OML2D 时出错:', error);
+            }
+
+            // ==================== 随机单词提问功能 ====================
+            // 将变量和函数定义在 try 块外，确保全局可访问
+            let wordsData = [];
+            let lastQuizTime = 0;
+            const MIN_QUIZ_INTERVAL = 5 * 60 * 1000; // 5分钟最小间隔
+            const MAX_QUIZ_INTERVAL = 10 * 60 * 1000; // 10分钟最大间隔
+
+            // 随机提问函数（暴露到全局）
+            window.showRandomQuiz = function() {
+                if (wordsData.length === 0) {
+                    console.warn('⚠️ 单词数据未加载');
+                    return;
+                }
+
+                // 随机选择一个单词
+                const randomIndex = Math.floor(Math.random() * wordsData.length);
+                const word = wordsData[randomIndex];
+
+                // 随机选择提问类型：0=中译英，1=英译中
+                const quizType = Math.floor(Math.random() * 2);
+
+                let message = '';
+                if (quizType === 0 && word.translations && word.translations.length > 0) {
+                    // 中译英：显示中文，让用户想英文
+                    const translation = word.translations[0].translation;
+                    message = `【单词测试】${translation} 的英文是？`;
+
+                    // 30秒后显示答案
+                    setTimeout(() => {
+                        if (window.oml2dInstance && window.oml2dInstance.tipsMessage) {
+                            window.oml2dInstance.tipsMessage(`答案是: ${word.word}`, 30000);
+                        }
+                    }, 30000);
+                } else {
+                    // 英译中：显示英文，让用户想中文
+                    message = `【单词测试】${word.word} 是什么意思？`;
+
+                    // 30秒后显示答案
+                    setTimeout(() => {
+                        if (window.oml2dInstance && window.oml2dInstance.tipsMessage && word.translations && word.translations.length > 0) {
+                            window.oml2dInstance.tipsMessage(`答案是: ${word.translations[0].translation}`, 30000);
+                        }
+                    }, 30000);
+                }
+
+                // 显示提问
+                if (window.oml2dInstance && window.oml2dInstance.tipsMessage) {
+                    window.oml2dInstance.tipsMessage(message, 30000);
+                    console.log(`💡 随机提问: ${message}`);
+                }
+
+                lastQuizTime = Date.now();
+            };
+
+            // 安排下一次提问
+            function scheduleNextQuiz() {
+                // 随机间隔：5-10分钟之间
+                const interval = MIN_QUIZ_INTERVAL + Math.random() * (MAX_QUIZ_INTERVAL - MIN_QUIZ_INTERVAL);
+
+                setTimeout(() => {
+                    window.showRandomQuiz();
+                    scheduleNextQuiz(); // 递归安排下一次
+                }, interval);
+
+                console.log(`⏰ 下次提问将在 ${Math.round(interval / 60000)} 分钟后`);
+            }
+
+            // 加载单词数据
+            fetch('4-CET6-顺序.json')
+                .then(response => response.json())
+                .then(data => {
+                    wordsData = data;
+                    console.log(`✅ 已加载 ${wordsData.length} 个单词用于随机提问`);
+                    console.log(`💡 可以在控制台输入 showRandomQuiz() 立即测试提问功能`);
+
+                    // 开始定时提问
+                    scheduleNextQuiz();
+                })
+                .catch(err => {
+                    console.error('❌ 加载单词数据失败:', err);
+                });
+            // ==================== 随机提问功能结束 ====================
+        });
+    </script>
 </body>
 </html>

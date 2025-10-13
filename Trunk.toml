@@ -1,0 +1,18 @@
+[build]
+target = "index.html"
+
+[serve]
+# 使用冷门端口7777
+port = 7777
+address = "127.0.0.1"
+# 自动打开浏览器
+open = false
+
+[serve.headers]
+"Access-Control-Allow-Origin" = "*"
+"Access-Control-Allow-Methods" = "GET, POST, PUT, DELETE, OPTIONS"
+"Access-Control-Allow-Headers" = "Content-Type, Authorization"
+
+[watch]
+# 监视这些路径的变化
+ignore = ["./target"]

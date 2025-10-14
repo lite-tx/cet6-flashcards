@@ -65,24 +65,6 @@ fn get_current_timestamp() -> i64 {
     js_sys::Date::now() as i64
 }
 
-// 计算衰减后的连续答对次数
-fn calculate_decayed_count(count: u32, last_review_ms: i64) -> u32 {
-    let now = get_current_timestamp();
-    let days_passed = (now - last_review_ms) / (1000 * 60 * 60 * 24);
-
-    if days_passed < 30 {
-        return count;
-    }
-
-    // 每30天衰减一半，向上取整
-    let decay_periods = days_passed / 30;
-    let mut result = count as f32;
-    for _ in 0..decay_periods {
-        result = result / 2.0;
-    }
-    result.ceil() as u32
-}
-
 // --- Reducer Logic ---
 impl Reducible for AppState {
     type Action = AppAction;
@@ -261,6 +243,27 @@ impl Reducible for AppState {
                         stats.total_correct += 1;
                         stats.consecutive_correct_answers += 1;
 
+                        // 更新 EasinessFactor
+                        // 1-2次答对：EF不变或微增0.05
+                        // 3次以上：正常增加0.15
+                        if stats.consecutive_correct_answers <= 2 {
+                            stats.easiness_factor += 0.05;
+                        } else {
+                            stats.easiness_factor += 0.15;
+                        }
+
+                        // 计算新的复习间隔
+                        // 首次答对：1天
+                        // 第二次答对：4天
+                        // 之后：NewInterval = OldInterval * EF
+                        if stats.consecutive_correct_answers == 1 {
+                            stats.interval = 1;
+                        } else if stats.consecutive_correct_answers == 2 {
+                            stats.interval = 4;
+                        } else {
+                            stats.interval = (stats.interval as f32 * stats.easiness_factor).round() as i32;
+                        }
+
                         // 检查是否需要流动：难词连续答对3次流入已掌握
                         if next_state.difficult_words.contains(&word_str) &&
                            stats.consecutive_correct_answers >= 3 {
@@ -270,13 +273,22 @@ impl Reducible for AppState {
                             }
                             // 添加到已掌握库
                             next_state.mastered_words.push(word_str.clone());
-                            send_l2d_message(&format!("太棒了！「{}」连续答对3次，从难词库流入已掌握库！", word_str));
+                            send_l2d_message(&format!("太棒了！「{}」连续答对3次，从难词库流入已掌握库！下次复习间隔：{}天",
+                                word_str, stats.interval));
                         } else {
-                            send_l2d_message(&format!("正确！「{}」连续答对{}次", word_str, stats.consecutive_correct_answers));
+                            send_l2d_message(&format!("正确！「{}」连续答对{}次，下次复习间隔：{}天",
+                                word_str, stats.consecutive_correct_answers, stats.interval));
                         }
                     } else {
                         // 答错处理
                         stats.consecutive_correct_answers = 0;
+                        stats.total_incorrect_answers += 1;
+
+                        // 降低 EasinessFactor，但不低于1.3
+                        stats.easiness_factor = (stats.easiness_factor - 0.2).max(1.3);
+
+                        // 重置间隔为1天
+                        stats.interval = 1;
 
                         // 检查是否需要流动：已掌握的单词答错立即流入难词库
                         if next_state.mastered_words.contains(&word_str) {
@@ -286,9 +298,11 @@ impl Reducible for AppState {
                             }
                             // 添加到难词库
                             next_state.difficult_words.push(word_str.clone());
-                            send_l2d_message(&format!("「{}」答错了，从已掌握库流入难词库", word_str));
+                            send_l2d_message(&format!("「{}」答错了，从已掌握库流入难词库。正确答案：{}",
+                                word_str, correct_answer));
                         } else {
-                            send_l2d_message(&format!("「{}」答错了，正确答案是: {}", word_str, correct_answer));
+                            send_l2d_message(&format!("「{}」答错了，正确答案：{}。复习间隔重置为1天",
+                                word_str, correct_answer));
                         }
                     }
 
@@ -335,61 +349,105 @@ impl Reducible for AppState {
     }
 }
 
+// 单词优先级信息（用于排序）
+#[derive(Debug, Clone)]
+struct WordPriority {
+    word: String,
+    due_date_factor: f32,
+    tie_breaker_score: f32,
+}
+
 // 生成动态复习库
 fn generate_review_pool(state: &mut AppState) {
-    // 1. 获取可供复习的单词列表 (排除缓存池)
-    let mut available_mastered: Vec<_> = state.mastered_words.iter()
-        .filter(|word| !state.cache_pool.contains(word))
-        .map(|word| (word.clone(), state.word_stats.get(word).map_or(0, |s| s.last_review_timestamp)))
-        .collect();
-    available_mastered.sort_by_key(|&(_, time)| time);
+    let now = get_current_timestamp();
+    let now_days = now / (1000 * 60 * 60 * 24);
 
-    let mut available_difficult: Vec<_> = state.difficult_words.iter()
-        .filter(|word| !state.cache_pool.contains(word))
-        .map(|word| (word.clone(), state.word_stats.get(word).map_or(0, |s| s.last_review_timestamp)))
-        .collect();
-    available_difficult.sort_by_key(|&(_, time)| time);
+    // 1. 收集所有单词（已掌握 + 难词）
+    let mut all_available_words = Vec::new();
 
-    // 2. 检查可复习单词总数是否达到最低要求
-    if available_mastered.len() + available_difficult.len() < MIN_REVIEW_POOL_SIZE {
-        send_l2d_message(&format!("可选复习单词不足{}个，请继续学习生词！", MIN_REVIEW_POOL_SIZE));
+    // 添加已掌握的单词
+    for word in &state.mastered_words {
+        all_available_words.push(word.clone());
+    }
+
+    // 添加难词
+    for word in &state.difficult_words {
+        all_available_words.push(word.clone());
+    }
+
+    // 2. 检查可复习单词总数
+    if all_available_words.is_empty() {
+        send_l2d_message("没有可复习的单词，请先标记一些单词！");
         state.dynamic_review_pool.clear();
+        state.cache_pool.clear();
         state.dynamic_review_index = 0;
         return;
     }
 
-    // 3. 确定复习池的目标大小
-    let pool_target_size = state.review_pool_target_size.max(MIN_REVIEW_POOL_SIZE);
+    // 3. 计算每个单词的优先级
+    let word_priorities: Vec<WordPriority> = all_available_words.iter().map(|word| {
+        let stats = state.word_stats.get(word).cloned().unwrap_or_default();
 
-    // 4. 根据新规则确定难词和已掌握单词的数量
-    let difficult_quota = (pool_target_size as f32 * 0.7).ceil() as usize;
-    let actual_difficult_count = difficult_quota.min(available_difficult.len());
-    
-    let remaining_spots = pool_target_size.saturating_sub(actual_difficult_count);
-    let actual_mastered_count = remaining_spots.min(available_mastered.len());
+        // 计算上次复习距今的天数
+        let last_review_days = if stats.last_review_timestamp == 0 {
+            // 从未复习过，视为无限久以前（高优先级）
+            1000000
+        } else {
+            stats.last_review_timestamp / (1000 * 60 * 60 * 24)
+        };
 
-    // 5. 构建动态复习库
-    let mut new_pool = Vec::new();
+        let days_since_last_review = (now_days - last_review_days).max(0) as f32;
+        let interval = stats.interval.max(1) as f32;
 
-    // 添加难词
-    for (word, _) in available_difficult.iter().take(actual_difficult_count) {
-        new_pool.push(word.clone());
-    }
+        // 计算到期因子 DueDateFactor = (当前日期 - LastReviewDate) / Interval
+        let due_date_factor = days_since_last_review / interval;
 
-    // 添加已掌握的单词
-    for (word, _) in available_mastered.iter().take(actual_mastered_count) {
-        new_pool.push(word.clone());
-    }
-    
-    // 对新生成的复习池应用衰减机制
-    for word in &new_pool {
-        if let Some(stats) = state.word_stats.get_mut(word) {
-            stats.consecutive_correct_answers =
-                calculate_decayed_count(stats.consecutive_correct_answers, stats.last_review_timestamp);
+        // 计算决胜分 TieBreakerScore = TotalIncorrectAnswers / (ConsecutiveCorrectAnswers + 1)
+        let tie_breaker_score = stats.total_incorrect_answers as f32
+            / (stats.consecutive_correct_answers + 1) as f32;
+
+        WordPriority {
+            word: word.clone(),
+            due_date_factor,
+            tie_breaker_score,
         }
-    }
+    }).collect();
 
-    state.dynamic_review_pool = new_pool;
+    // 4. 分离已到期和未到期的单词
+    let mut due_words: Vec<WordPriority> = word_priorities.iter()
+        .filter(|wp| wp.due_date_factor >= 1.0)
+        .cloned()
+        .collect();
+
+    let mut not_due_words: Vec<WordPriority> = word_priorities.iter()
+        .filter(|wp| wp.due_date_factor < 1.0)
+        .cloned()
+        .collect();
+
+    // 5. 排序
+    // 已到期的单词按 TieBreakerScore 降序排序（错误多的优先）
+    due_words.sort_by(|a, b| {
+        b.tie_breaker_score.partial_cmp(&a.tie_breaker_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // 未到期的单词按 DueDateFactor 降序排序（最接近到期的优先）
+    not_due_words.sort_by(|a, b| {
+        b.due_date_factor.partial_cmp(&a.due_date_factor)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // 6. 分配到复习池和缓存池
+    // 复习池 = 已到期的单词
+    state.dynamic_review_pool = due_words.iter()
+        .map(|wp| wp.word.clone())
+        .collect();
+
+    // 缓存池 = 未到期的单词
+    state.cache_pool = not_due_words.iter()
+        .map(|wp| wp.word.clone())
+        .collect();
+
     state.dynamic_review_index = 0;
 
     // 重置周期统计
@@ -406,6 +464,9 @@ fn generate_review_pool(state: &mut AppState) {
         stats.cycle_first_answer_correct = None;
         stats.cycle_attempts = 0;
     }
+
+    send_l2d_message(&format!("复习池已更新：{}个到期单词，{}个未到期单词（缓存池）",
+        state.dynamic_review_pool.len(), state.cache_pool.len()));
 }
 
 // 周期结算

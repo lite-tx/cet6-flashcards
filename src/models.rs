@@ -31,6 +31,11 @@ pub struct WordStats {
     pub consecutive_correct_answers: u32,   // 连续答对次数
     pub last_review_timestamp: i64,         // 上次复习时间 (Unix timestamp, milliseconds)
 
+    // 间隔重复算法参数
+    pub easiness_factor: f32,               // 难度系数 (初始2.5, 最小1.3)
+    pub interval: i32,                      // 复习间隔天数 (初始1)
+    pub total_incorrect_answers: u32,       // 总答错次数
+
     // 历史统计（不衰减）
     pub total_reviews: u32,                 // 总复习次数
     pub total_correct: u32,                 // 总答对次数
@@ -46,6 +51,9 @@ impl Default for WordStats {
         Self {
             consecutive_correct_answers: 0,
             last_review_timestamp: 0,
+            easiness_factor: 2.5,
+            interval: 1,
+            total_incorrect_answers: 0,
             total_reviews: 0,
             total_correct: 0,
             cycle_reviewed: false,

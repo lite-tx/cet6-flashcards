@@ -6,10 +6,18 @@ __pycache__/
 
 # RVC 相关
 rvc_models/
+# RVC 模型文件（过大，需自行准备）
+11_RVC/*.pth
+11_RVC/*.index
+
+# Live2D 模型（版权原因，需自行准备）
+models/
 
 # Rust/WASM 构建产物
 target/
 dist/
+
+# 依赖锁文件（库项目不应提交）
 Cargo.lock
 
 # 临时文件
@@ -25,6 +33,3 @@ Cargo.lock
 
 # 系统文件
 Thumbs.db
-# RVC 模型文件（过大，需自行准备）
-11_RVC/*.pth
-11_RVC/*.index

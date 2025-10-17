@@ -27,7 +27,6 @@ pub fn set_current_word(word: String) {
 }
 
 const STORAGE_KEY: &str = "cet6_app_state_v2";
-const MIN_REVIEW_POOL_SIZE: usize = 20;
 
 // --- Actions for Reducer ---
 #[derive(Debug, Clone)]
@@ -243,6 +242,9 @@ impl Reducible for AppState {
                         stats.total_correct += 1;
                         stats.consecutive_correct_answers += 1;
 
+                        // 显示正确表情（3号表情 - clever）
+                        show_correct_expression();
+
                         // 更新 EasinessFactor
                         // 1-2次答对：EF不变或微增0.05
                         // 3次以上：正常增加0.15
@@ -283,6 +285,9 @@ impl Reducible for AppState {
                         // 答错处理
                         stats.consecutive_correct_answers = 0;
                         stats.total_incorrect_answers += 1;
+
+                        // 显示错误表情（在4,5,6,8,9中随机选择）
+                        show_error_expression();
 
                         // 降低 EasinessFactor，但不低于1.3
                         stats.easiness_factor = (stats.easiness_factor - 0.2).max(1.3);
@@ -520,6 +525,30 @@ fn send_l2d_message(message: &str) {
     }
 }
 
+// 显示正确答案表情
+fn show_correct_expression() {
+    let window = web_sys::window().unwrap();
+    if let Ok(func) = js_sys::Reflect::get(&window, &"showCorrectExpression".into()) {
+        if func.is_function() {
+            if let Some(function) = func.dyn_ref::<js_sys::Function>() {
+                let _ = function.call0(&window);
+            }
+        }
+    }
+}
+
+// 显示错误答案表情
+fn show_error_expression() {
+    let window = web_sys::window().unwrap();
+    if let Ok(func) = js_sys::Reflect::get(&window, &"showErrorExpression".into()) {
+        if func.is_function() {
+            if let Some(function) = func.dyn_ref::<js_sys::Function>() {
+                let _ = function.call0(&window);
+            }
+        }
+    }
+}
+
 // 主组件
 #[function_component(App)]
 fn app() -> Html {
@@ -597,10 +626,12 @@ fn app() -> Html {
     // 键盘事件处理
     {
         let current_mode = current_mode.clone();
+        let is_flipped = is_flipped.clone();
         use_effect_with(app_state.clone(), move |app_state| {
             let document = web_sys::window().unwrap().document().unwrap();
             let app_state = app_state.clone();
             let current_mode = current_mode.clone();
+            let is_flipped = is_flipped.clone();
 
             let keydown_handler = Closure::<dyn Fn(KeyboardEvent)>::new(move |event: KeyboardEvent| {
                 if app_state.is_locked {
@@ -611,17 +642,19 @@ fn app() -> Html {
                     "ArrowLeft" => {
                         event.prevent_default();
                         current_mode.set("new".to_string());
+                        is_flipped.set(false);  // 重置卡片状态
                         app_state.dispatch(AppAction::PrevNewWord);
                     }
                     "ArrowRight" => {
                         event.prevent_default();
                         current_mode.set("new".to_string());
+                        is_flipped.set(false);  // 重置卡片状态
                         app_state.dispatch(AppAction::NextNewWord);
                     }
                     "ArrowUp" => {
                         event.prevent_default();
-                        if app_state.dynamic_review_pool.len() < MIN_REVIEW_POOL_SIZE {
-                            send_l2d_message(&format!("复习池单词不足{}个，请继续学习生词！", MIN_REVIEW_POOL_SIZE));
+                        if app_state.dynamic_review_pool.is_empty() {
+                            send_l2d_message("复习池为空，请先标记一些单词！");
                         } else {
                             current_mode.set("review".to_string());
                             app_state.dispatch(AppAction::PrevReviewWord);
@@ -629,8 +662,8 @@ fn app() -> Html {
                     }
                     "ArrowDown" => {
                         event.prevent_default();
-                        if app_state.dynamic_review_pool.len() < MIN_REVIEW_POOL_SIZE {
-                            send_l2d_message(&format!("复习池单词不足{}个，请继续学习生词！", MIN_REVIEW_POOL_SIZE));
+                        if app_state.dynamic_review_pool.is_empty() {
+                            send_l2d_message("复习池为空，请先标记一些单词！");
                         } else {
                             current_mode.set("review".to_string());
                             app_state.dispatch(AppAction::NextReviewWord);

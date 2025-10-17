@@ -6,6 +6,7 @@
     <title>CET6 背单词工具</title>
     <link data-trunk rel="copy-file" href="4-CET6-顺序.json" />
     <link data-trunk rel="copy-dir" href="models" />
+    <link data-trunk rel="copy-dir" href="audio_cache" />
     <style>
         * {
             margin: 0;
@@ -538,14 +539,39 @@
 
             // 随机提问函数（暴露到全局）
             window.showRandomQuiz = function() {
-                if (wordsData.length === 0) {
-                    console.warn('⚠️ 单词数据未加载');
+                // 从 LocalStorage 直接读取缓存池
+                let cachePool = [];
+                try {
+                    const appState = localStorage.getItem('cet6_app_state_v2');
+                    if (appState) {
+                        const state = JSON.parse(appState);
+                        cachePool = state.cache_pool || [];
+                    }
+                } catch (e) {
+                    console.error('读取缓存池失败:', e);
+                }
+
+                console.log('🔍 从 LocalStorage 获取的缓存池:', cachePool);
+                console.log('🔍 缓存池长度:', cachePool.length);
+
+                if (!cachePool || cachePool.length === 0) {
+                    console.warn('⚠️ 缓存池为空，无法进行随机提问');
+                    if (window.oml2dInstance && window.oml2dInstance.tipsMessage) {
+                        window.oml2dInstance.tipsMessage('缓存池为空，请先完成一轮复习！', 5000);
+                    }
                     return;
                 }
 
-                // 随机选择一个单词
-                const randomIndex = Math.floor(Math.random() * wordsData.length);
-                const word = wordsData[randomIndex];
+                // 从缓存池中随机选择一个单词
+                const randomIndex = Math.floor(Math.random() * cachePool.length);
+                const wordStr = cachePool[randomIndex];
+
+                // 从 wordsData 中找到完整的单词对象
+                const word = wordsData.find(w => w.word === wordStr);
+                if (!word) {
+                    console.warn('⚠️ 在单词数据中未找到:', wordStr);
+                    return;
+                }
 
                 // 随机选择提问类型：0=中译英，1=英译中
                 const quizType = Math.floor(Math.random() * 2);
@@ -577,11 +603,76 @@
                 // 显示提问
                 if (window.oml2dInstance && window.oml2dInstance.tipsMessage) {
                     window.oml2dInstance.tipsMessage(message, 30000);
-                    console.log(`💡 随机提问: ${message}`);
+                    console.log(`💡 随机提问 (从缓存池): ${message}`);
                 }
 
                 lastQuizTime = Date.now();
             };
+
+            // 调试工具：查看缓存池统计
+            window.showCacheStats = function() {
+                const appState = localStorage.getItem('cet6_app_state_v2');
+                if (!appState) {
+                    console.warn('⚠️ 没有找到应用状态');
+                    return;
+                }
+
+                const state = JSON.parse(appState);
+                const cachePool = state.cache_pool || [];
+                const wordStats = state.word_stats || {};
+                const now = Date.now();
+                const nowDays = Math.floor(now / (1000 * 60 * 60 * 24));
+
+                console.log('\n📊 缓存池统计信息:');
+                console.log('='.repeat(80));
+
+                cachePool.forEach((word, i) => {
+                    const stats = wordStats[word] || {};
+                    const interval = stats.interval || 1;
+
+                    console.log(`\n${i+1}. ${word}`);
+
+                    // 特殊处理：从未复习过的单词
+                    if (stats.last_review_timestamp === 0 || !stats.last_review_timestamp) {
+                        console.log(`   间隔: ${interval}天 | 状态: 从未复习 | 到期因子: ∞`);
+                        console.log(`   ✅ 已到期，会进入复习池（从未复习）`);
+                    } else {
+                        const lastReviewDays = Math.floor(stats.last_review_timestamp / (1000 * 60 * 60 * 24));
+                        const daysSince = nowDays - lastReviewDays;
+                        const dueFactor = daysSince / interval;
+                        const daysUntil = interval - daysSince;
+
+                        console.log(`   间隔: ${interval}天 | 距上次: ${daysSince}天 | 到期因子: ${dueFactor.toFixed(2)}`);
+                        console.log(`   ${dueFactor >= 1 ? '✅ 已到期，会进入复习池' : `⏳ 还需 ${daysUntil} 天到期`}`);
+                    }
+                });
+
+                console.log('\n💡 提示: setWordDays("单词", 天数) - 设置距上次复习天数');
+                console.log('💡 提示: 到期因子 >= 1.0 时，单词会从缓存池转入复习池');
+                console.log('='.repeat(80) + '\n');
+            };
+
+            // 调试工具：设置单词的上次复习时间
+            window.setWordDays = function(word, daysAgo) {
+                const appState = localStorage.getItem('cet6_app_state_v2');
+                if (!appState) return;
+
+                const state = JSON.parse(appState);
+                if (!state.word_stats[word]) {
+                    console.warn(`⚠️ 单词 "${word}" 不存在`);
+                    return;
+                }
+
+                const now = Date.now();
+                state.word_stats[word].last_review_timestamp = now - (daysAgo * 24 * 60 * 60 * 1000);
+                localStorage.setItem('cet6_app_state_v2', JSON.stringify(state));
+
+                console.log(`✅ 已将 "${word}" 设置为 ${daysAgo} 天前复习`);
+                console.log('💡 刷新页面生效，或调用 showCacheStats() 查看');
+            };
+
+            console.log('💡 调试工具已加载: showCacheStats() - 查看缓存池统计');
+
 
             // 安排下一次提问
             function scheduleNextQuiz() {
@@ -616,11 +707,143 @@
             // RVC 服务器配置
             const RVC_SERVER_URL = 'http://localhost:8765';
             const USE_RVC = true;  // 设为 false 使用浏览器内置 TTS
+            const USE_OFFLINE_CACHE = true;  // 是否使用离线语音缓存
+
+            // ==================== Live2D 表情控制 ====================
+            // 显示正确答案表情（3号表情 - clever）
+            window.showCorrectExpression = function() {
+                try {
+                    if (window.oml2dInstance?.models?.model) {
+                        const model = window.oml2dInstance.models.model;
+                        if (typeof model.expression === 'function') {
+                            model.expression('3clever');
+                            console.log('✅ 显示正确答案表情: 3clever');
+                            // 3秒后恢复默认
+                            setTimeout(() => {
+                                model.expression('1desk');
+                            }, 3000);
+                        } else if (typeof model.internalModel?.expression === 'function') {
+                            model.internalModel.expression('3clever');
+                            console.log('✅ 显示正确答案表情: 3clever (internalModel)');
+                            setTimeout(() => {
+                                model.internalModel.expression('1desk');
+                            }, 3000);
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ 显示正确表情失败:', error);
+                }
+            };
+
+            // 显示错误答案表情（在4,5,6,8,9中随机选择）
+            window.showErrorExpression = function() {
+                try {
+                    const errorExpressions = ['4OAO', '5QAQ', '6i gi a ri', '8punch', '9'];
+                    const randomExpression = errorExpressions[Math.floor(Math.random() * errorExpressions.length)];
+
+                    if (window.oml2dInstance?.models?.model) {
+                        const model = window.oml2dInstance.models.model;
+                        if (typeof model.expression === 'function') {
+                            model.expression(randomExpression);
+                            console.log(`✅ 显示错误答案表情: ${randomExpression}`);
+                            // 3秒后恢复默认
+                            setTimeout(() => {
+                                model.expression('1desk');
+                            }, 3000);
+                        } else if (typeof model.internalModel?.expression === 'function') {
+                            model.internalModel.expression(randomExpression);
+                            console.log(`✅ 显示错误答案表情: ${randomExpression} (internalModel)`);
+                            setTimeout(() => {
+                                model.internalModel.expression('1desk');
+                            }, 3000);
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ 显示错误表情失败:', error);
+                }
+            };
+            // ==================== Live2D 表情控制结束 ====================
 
             // 创建语音合成对象（fallback）
             const synth = window.speechSynthesis;
             let currentVoice = null;
             let currentAudio = null;  // 当前播放的音频对象
+
+            // 离线语音缓存管理
+            class AudioCacheManager {
+                constructor() {
+                    this.cache = new Map();
+                    this.cacheIndex = null;
+                    this.cachePath = 'audio_cache/';
+                }
+
+                // 加载缓存索引
+                async loadCacheIndex() {
+                    try {
+                        const response = await fetch(this.cachePath + 'cache_index.json');
+                        if (response.ok) {
+                            this.cacheIndex = await response.json();
+                            console.log(`✅ 音频缓存索引已加载，包含 ${this.cacheIndex.total_count} 个单词`);
+                            return true;
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ 无法加载音频缓存索引:', error);
+                    }
+                    return false;
+                }
+
+                // 检查单词是否有缓存
+                hasCache(word) {
+                    if (!this.cacheIndex) return false;
+                    return this.cacheIndex.words.hasOwnProperty(word.toLowerCase());
+                }
+
+                // 获取缓存的音频 URL
+                getCacheUrl(word) {
+                    if (!this.hasCache(word)) return null;
+                    return this.cachePath + word.toLowerCase() + '.wav';
+                }
+
+                // 预加载音频到内存
+                async preloadAudio(word) {
+                    if (!this.hasCache(word) || this.cache.has(word)) {
+                        return false;
+                    }
+
+                    try {
+                        const audioUrl = this.getCacheUrl(word);
+                        const response = await fetch(audioUrl);
+                        if (response.ok) {
+                            const audioBlob = await response.blob();
+                            const blobUrl = URL.createObjectURL(audioBlob);
+                            this.cache.set(word, blobUrl);
+                            console.log(`🎵 预加载音频: ${word}`);
+                            return true;
+                        }
+                    } catch (error) {
+                        console.warn(`⚠️ 预加载音频失败: ${word}`, error);
+                    }
+                    return false;
+                }
+
+                // 预加载一批音频
+                async preloadBatch(words) {
+                    const promises = words.map(word => this.preloadAudio(word));
+                    const results = await Promise.allSettled(promises);
+                    const successCount = results.filter(r => r.status === 'fulfilled' && r.value).length;
+                    if (successCount > 0) {
+                        console.log(`✅ 预加载完成: ${successCount}/${words.length} 个音频`);
+                    }
+                }
+
+                // 清理缓存
+                clearCache() {
+                    this.cache.forEach(url => URL.revokeObjectURL(url));
+                    this.cache.clear();
+                }
+            }
+
+            const audioCache = new AudioCacheManager();
 
             // 初始化语音
             function initVoice() {
@@ -647,37 +870,72 @@
                         currentAudio = null;
                     }
 
-                    // 显示加载提示
-                    if (window.oml2dInstance?.tipsMessage) {
-                        window.oml2dInstance.tipsMessage('正在生成语音...', 2000);
+                    let audioUrl = null;
+                    let fromCache = false;
+
+                    // 1. 优先使用离线缓存
+                    if (USE_OFFLINE_CACHE && audioCache.hasCache(text)) {
+                        console.log('📂 使用缓存音频:', text);
+
+                        // 检查内存缓存
+                        if (audioCache.cache.has(text)) {
+                            audioUrl = audioCache.cache.get(text);
+                            fromCache = true;
+                            console.log('💾 从内存缓存加载');
+                        } else {
+                            // 从文件加载
+                            try {
+                                const cacheUrl = audioCache.getCacheUrl(text);
+                                const response = await fetch(cacheUrl);
+                                if (response.ok) {
+                                    const audioBlob = await response.blob();
+                                    audioUrl = URL.createObjectURL(audioBlob);
+                                    audioCache.cache.set(text, audioUrl);
+                                    fromCache = true;
+                                    console.log('💿 从文件缓存加载');
+                                }
+                            } catch (error) {
+                                console.warn('⚠️ 加载缓存音频失败，尝试在线生成:', error);
+                            }
+                        }
                     }
 
-                    // 调用 RVC API
-                    const response = await fetch(`${RVC_SERVER_URL}/tts`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            text: text,
-                            rate: '+0%',
-                            pitch: '+0Hz'
-                        })
-                    });
+                    // 2. 如果缓存不可用，调用 RVC API 在线生成
+                    if (!audioUrl) {
+                        console.log('🌐 调用 RVC 服务器在线生成');
 
-                    if (!response.ok) {
-                        throw new Error(`RVC 服务器错误: ${response.status}`);
+                        // 显示加载提示
+                        if (window.oml2dInstance?.tipsMessage) {
+                            window.oml2dInstance.tipsMessage('正在生成语音...', 2000);
+                        }
+
+                        const response = await fetch(`${RVC_SERVER_URL}/tts`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                text: text,
+                                rate: '+0%',
+                                pitch: '+0Hz'
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`RVC 服务器错误: ${response.status}`);
+                        }
+
+                        // 获取音频 blob
+                        const audioBlob = await response.blob();
+                        audioUrl = URL.createObjectURL(audioBlob);
                     }
-
-                    // 获取音频 blob
-                    const audioBlob = await response.blob();
-                    const audioUrl = URL.createObjectURL(audioBlob);
 
                     // 创建并播放音频
                     currentAudio = new Audio(audioUrl);
 
                     currentAudio.onplay = () => {
-                        console.log('🔊 开始播放 RVC 音频');
+                        const source = fromCache ? '(缓存)' : '(在线生成)';
+                        console.log(`🔊 开始播放 RVC 音频 ${source}`);
                         if (window.oml2dInstance?.tipsMessage) {
                             window.oml2dInstance.tipsMessage(`正在朗读: ${text}`, 2000);
                         }
@@ -685,13 +943,17 @@
 
                     currentAudio.onended = () => {
                         console.log('✅ RVC 朗读完成');
-                        URL.revokeObjectURL(audioUrl);
+                        if (!fromCache) {
+                            URL.revokeObjectURL(audioUrl);
+                        }
                         currentAudio = null;
                     };
 
                     currentAudio.onerror = (error) => {
                         console.error('❌ 音频播放错误:', error);
-                        URL.revokeObjectURL(audioUrl);
+                        if (!fromCache) {
+                            URL.revokeObjectURL(audioUrl);
+                        }
                         currentAudio = null;
                         if (window.oml2dInstance?.tipsMessage) {
                             window.oml2dInstance.tipsMessage('播放出错了～', 2000);
@@ -804,6 +1066,66 @@
                     }, 3000);
                 }
             }, 2000);
+
+            // ==================== 音频缓存初始化和预加载 ====================
+            // 初始化音频缓存
+            (async () => {
+                const cacheLoaded = await audioCache.loadCacheIndex();
+                if (cacheLoaded && USE_OFFLINE_CACHE) {
+                    console.log('🎵 离线语音缓存已启用');
+
+                    // 预加载当前单词的音频
+                    const currentWordEl = document.querySelector('.word');
+                    if (currentWordEl) {
+                        const currentWord = currentWordEl.textContent.trim();
+                        if (currentWord && currentWord !== '没有单词了！' && currentWord !== '加载中...') {
+                            audioCache.preloadAudio(currentWord);
+                        }
+                    }
+                }
+            })();
+
+            // 单词切换时的预加载功能（供 Rust 调用）
+            window.preloadWordAudio = async function(word) {
+                if (!word || !USE_OFFLINE_CACHE) return;
+
+                // 预加载当前单词
+                await audioCache.preloadAudio(word);
+
+                // 可选：预加载下一个/上一个单词（如果有单词列表）
+                // 这里可以扩展逻辑来预加载相邻的单词
+            };
+
+            // DOM 监听：自动预加载当前显示的单词
+            const wordObserver = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'childList' || mutation.type === 'characterData') {
+                        const wordElement = document.querySelector('.word');
+                        if (wordElement) {
+                            const newWord = wordElement.textContent.trim();
+                            if (newWord && newWord !== '没有单词了！' && newWord !== '加载中...') {
+                                console.log('🔄 检测到单词切换:', newWord);
+                                audioCache.preloadAudio(newWord);
+                            }
+                        }
+                    }
+                });
+            });
+
+            // 监听 DOM 变化
+            setTimeout(() => {
+                const appElement = document.querySelector('#app');
+                if (appElement) {
+                    wordObserver.observe(appElement, {
+                        childList: true,
+                        subtree: true,
+                        characterData: true,
+                        characterDataOldValue: true
+                    });
+                    console.log('✅ 已启动单词切换监听，会自动预加载语音');
+                }
+            }, 3000);
+            // ==================== 音频缓存初始化结束 ====================
 
             // 也可以直接调用 speakWord() 来测试
             console.log('💡 可以在控制台输入 speakWord() 立即测试朗读功能');

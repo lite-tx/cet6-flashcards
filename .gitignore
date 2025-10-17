@@ -13,6 +13,9 @@ rvc_models/
 # Live2D 模型（版权原因，需自行准备）
 models/
 
+# 音频缓存（版权原因，需自行准备）
+audio_cache/
+
 # Rust/WASM 构建产物
 target/
 dist/

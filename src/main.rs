@@ -110,6 +110,9 @@ impl Reducible for AppState {
 
                 if !found {
                     send_l2d_message("已经是最后一个生词了！");
+                } else {
+                    // 找到生词后朗读
+                    speak_current_word();
                 }
             }
 
@@ -132,6 +135,9 @@ impl Reducible for AppState {
 
                 if !found {
                     send_l2d_message("已经是第一个生词了！");
+                } else {
+                    // 找到生词后朗读
+                    speak_current_word();
                 }
             }
 
@@ -179,6 +185,9 @@ impl Reducible for AppState {
 
                     // 重新生成动态复习库
                     generate_review_pool(&mut next_state);
+
+                    // 标记后朗读当前单词
+                    speak_current_word();
                 }
             }
 
@@ -209,6 +218,9 @@ impl Reducible for AppState {
 
                     // 重新生成动态复习库
                     generate_review_pool(&mut next_state);
+
+                    // 标记后朗读当前单词
+                    speak_current_word();
                 }
             }
 
@@ -310,6 +322,9 @@ impl Reducible for AppState {
                                 word_str, correct_answer));
                         }
                     }
+
+                    // 提交答案后朗读当前单词（显示对比时）
+                    speak_current_word();
 
                     // 检查是否需要周期结算
                     if next_state.cycle_stats.reviewed_words >= next_state.dynamic_review_pool.len() {
@@ -549,6 +564,32 @@ fn show_error_expression() {
     }
 }
 
+// 调用 Live2D 朗读当前单词（延迟调用以等待 DOM 更新）
+fn speak_current_word() {
+    let window = web_sys::window().unwrap();
+
+    // 创建一个延迟调用的闭包
+    let callback = Closure::once(Box::new(move || {
+        if let Some(window) = web_sys::window() {
+            if let Ok(func) = js_sys::Reflect::get(&window, &"speakWord".into()) {
+                if func.is_function() {
+                    if let Some(function) = func.dyn_ref::<js_sys::Function>() {
+                        let _ = function.call0(&window);
+                    }
+                }
+            }
+        }
+    }) as Box<dyn FnOnce()>);
+
+    // 延迟 100ms 调用，等待 DOM 更新
+    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+        callback.as_ref().unchecked_ref(),
+        100
+    );
+
+    callback.forget();
+}
+
 // 主组件
 #[function_component(App)]
 fn app() -> Html {
@@ -668,6 +709,14 @@ fn app() -> Html {
                             current_mode.set("review".to_string());
                             app_state.dispatch(AppAction::NextReviewWord);
                         }
+                    }
+                    "PageUp" => {
+                        event.prevent_default();
+                        app_state.dispatch(AppAction::MarkMastered);
+                    }
+                    "PageDown" => {
+                        event.prevent_default();
+                        app_state.dispatch(AppAction::MarkDifficult);
                     }
                     _ => {}
                 }

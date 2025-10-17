@@ -7,6 +7,7 @@
     <link data-trunk rel="copy-file" href="4-CET6-顺序.json" />
     <link data-trunk rel="copy-dir" href="models" />
     <link data-trunk rel="copy-dir" href="audio_cache" />
+    <link data-trunk rel="copy-dir" href="lib" />
     <style>
         * {
             margin: 0;
@@ -407,8 +408,8 @@
 <body>
     <div id="app"></div>
 
-    <!-- Live2D 看板娘 - 使用CDN版本 -->
-    <script src="https://unpkg.com/oh-my-live2d@latest"></script>
+    <!-- Live2D 看板娘 - 使用本地版本 -->
+    <script src="lib/oh-my-live2d.min.js"></script>
     <script>
         console.log('准备初始化 OML2D...');
 
@@ -455,25 +456,12 @@
                         }
                     ],
                     statusBar: {
-                        disable: false,
+                        disable: true,
                         transitionTime: 800
                     },
                     menus: {
                         disable: true,
-                        items: [
-                            {
-                                id: 'rest',
-                                icon: 'icon-rest',
-                                title: '休息',
-                                onClick: (oml2d) => oml2d.stageSlideOut()
-                            },
-                            {
-                                id: 'about',
-                                icon: 'icon-about',
-                                title: '关于',
-                                onClick: () => window.open('https://oml2d.com')
-                            }
-                        ]
+                        items: []
                     },
                     tips: {
                         style: {
@@ -505,6 +493,19 @@
                     window.oml2dInstance.onLoad(() => {
                         console.log('✅ 模型加载完成！');
                         console.log('💡 视线跟踪已自动启用，移动鼠标试试看！');
+
+                        // 模型加载完成后，尝试绑定点击事件
+                        const model = window.oml2dInstance.models?.model;
+                        if (model) {
+                            console.log('📝 模型实例可用，检查可用方法...');
+                            console.log('   - model 对象:', model);
+                            console.log('   - internalModel:', model.internalModel);
+
+                            // 打印模型的所有方法
+                            if (model.internalModel) {
+                                console.log('   - internalModel 方法:', Object.getOwnPropertyNames(Object.getPrototypeOf(model.internalModel)));
+                            }
+                        }
                     });
                 }
 
@@ -605,6 +606,9 @@
                     window.oml2dInstance.tipsMessage(message, 30000);
                     console.log(`💡 随机提问 (从缓存池): ${message}`);
                 }
+
+                // 提问后切换默认表情
+                window.switchDefaultExpression();
 
                 lastQuizTime = Date.now();
             };
@@ -710,35 +714,83 @@
             const USE_OFFLINE_CACHE = true;  // 是否使用离线语音缓存
 
             // ==================== Live2D 表情控制 ====================
+            // 默认表情池 (包括9号表情、1desk、2mic、7keyboard)
+            const DEFAULT_EXPRESSIONS = ['9', '1desk', '2mic', '7keyboard'];
+            // 当前默认表情
+            let currentDefaultExpression = '9';
+            // 表情切换标志，防止打断正确/错误表情
+            let isShowingTemporaryExpression = false;
+
+            // 获取当前默认表情（供 Rust 调用）
+            window.getCurrentDefaultExpression = function() {
+                return currentDefaultExpression;
+            };
+
+            // 随机切换默认表情
+            window.switchDefaultExpression = function() {
+                // 如果正在显示临时表情（正确/错误），不切换
+                if (isShowingTemporaryExpression) {
+                    console.log('⏸️ 正在显示临时表情，跳过默认表情切换');
+                    return;
+                }
+
+                // 从表情池中随机选择一个新的默认表情
+                const newExpression = DEFAULT_EXPRESSIONS[Math.floor(Math.random() * DEFAULT_EXPRESSIONS.length)];
+                currentDefaultExpression = newExpression;
+
+                try {
+                    if (window.oml2dInstance?.models?.model) {
+                        const model = window.oml2dInstance.models.model;
+                        if (typeof model.expression === 'function') {
+                            model.expression(newExpression);
+                            console.log(`✨ 切换默认表情: ${newExpression}`);
+                        } else if (typeof model.internalModel?.expression === 'function') {
+                            model.internalModel.expression(newExpression);
+                            console.log(`✨ 切换默认表情: ${newExpression} (internalModel)`);
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ 切换默认表情失败:', error);
+                }
+            };
+
             // 显示正确答案表情（3号表情 - clever）
             window.showCorrectExpression = function() {
                 try {
+                    isShowingTemporaryExpression = true;
+
                     if (window.oml2dInstance?.models?.model) {
                         const model = window.oml2dInstance.models.model;
                         if (typeof model.expression === 'function') {
                             model.expression('3clever');
                             console.log('✅ 显示正确答案表情: 3clever');
-                            // 3秒后恢复默认
+                            // 3秒后恢复到当前默认表情
                             setTimeout(() => {
-                                model.expression('1desk');
+                                model.expression(currentDefaultExpression);
+                                isShowingTemporaryExpression = false;
+                                console.log(`🔄 恢复到默认表情: ${currentDefaultExpression}`);
                             }, 3000);
                         } else if (typeof model.internalModel?.expression === 'function') {
                             model.internalModel.expression('3clever');
                             console.log('✅ 显示正确答案表情: 3clever (internalModel)');
                             setTimeout(() => {
-                                model.internalModel.expression('1desk');
+                                model.internalModel.expression(currentDefaultExpression);
+                                isShowingTemporaryExpression = false;
+                                console.log(`🔄 恢复到默认表情: ${currentDefaultExpression}`);
                             }, 3000);
                         }
                     }
                 } catch (error) {
                     console.error('❌ 显示正确表情失败:', error);
+                    isShowingTemporaryExpression = false;
                 }
             };
 
-            // 显示错误答案表情（在4,5,6,8,9中随机选择）
+            // 显示错误答案表情（在4,5,6,8中随机选择）
             window.showErrorExpression = function() {
                 try {
-                    const errorExpressions = ['4OAO', '5QAQ', '6i gi a ri', '8punch', '9'];
+                    isShowingTemporaryExpression = true;
+                    const errorExpressions = ['4OAO', '5QAQ', '6i gi a ri', '8punch'];
                     const randomExpression = errorExpressions[Math.floor(Math.random() * errorExpressions.length)];
 
                     if (window.oml2dInstance?.models?.model) {
@@ -746,20 +798,25 @@
                         if (typeof model.expression === 'function') {
                             model.expression(randomExpression);
                             console.log(`✅ 显示错误答案表情: ${randomExpression}`);
-                            // 3秒后恢复默认
+                            // 3秒后恢复到当前默认表情
                             setTimeout(() => {
-                                model.expression('1desk');
+                                model.expression(currentDefaultExpression);
+                                isShowingTemporaryExpression = false;
+                                console.log(`🔄 恢复到默认表情: ${currentDefaultExpression}`);
                             }, 3000);
                         } else if (typeof model.internalModel?.expression === 'function') {
                             model.internalModel.expression(randomExpression);
                             console.log(`✅ 显示错误答案表情: ${randomExpression} (internalModel)`);
                             setTimeout(() => {
-                                model.internalModel.expression('1desk');
+                                model.internalModel.expression(currentDefaultExpression);
+                                isShowingTemporaryExpression = false;
+                                console.log(`🔄 恢复到默认表情: ${currentDefaultExpression}`);
                             }, 3000);
                         }
                     }
                 } catch (error) {
                     console.error('❌ 显示错误表情失败:', error);
+                    isShowingTemporaryExpression = false;
                 }
             };
             // ==================== Live2D 表情控制结束 ====================
@@ -1038,34 +1095,169 @@
                 }
             };
 
-            // 为 Live2D 添加点击事件监听
+            // 为 Live2D 添加 ROI 限制的点击检测
             setTimeout(() => {
-                // 查找 Live2D 的 canvas 元素
                 const canvas = document.querySelector('#oml2d-canvas');
 
                 if (canvas) {
-                    canvas.style.cursor = 'pointer';
-                    canvas.addEventListener('click', () => {
-                        console.log('🖱️ Live2D 被点击了！');
-                        window.speakWord();
+                    canvas.addEventListener('click', (event) => {
+                        try {
+                            // 获取 canvas 的边界
+                            const rect = canvas.getBoundingClientRect();
+
+                            // 计算点击位置相对于 canvas 的坐标
+                            const x = event.clientX - rect.left;
+                            const y = event.clientY - rect.top;
+
+                            console.log(`🖱️ 点击坐标: (${x.toFixed(0)}, ${y.toFixed(0)})`);
+
+                            // 定义模型的 ROI（感兴趣区域）
+                            const ROI = {
+                                x1: 270,    // 左上角 X
+                                y1: 265,    // 左上角 Y
+                                x2: 400,    // 右下角 X
+                                y2: 450     // 右下角 Y
+                            };
+
+                            // 检查点击是否在 ROI 内
+                            const isInROI =
+                                x >= ROI.x1 && x <= ROI.x2 &&
+                                y >= ROI.y1 && y <= ROI.y2;
+
+                            console.log(`🎯 ROI 检测: ${isInROI ? '命中' : '未命中'}`);
+                            console.log(`   ROI 范围: (${ROI.x1}, ${ROI.y1}) → (${ROI.x2}, ${ROI.y2})`);
+
+                            if (isInROI) {
+                                console.log('✅ 点击在 ROI 内！触发朗读');
+                                window.speakWord();
+                            } else {
+                                console.log('❌ 点击在 ROI 外');
+                            }
+                        } catch (error) {
+                            console.error('❌ 点击检测出错:', error);
+                        }
                     });
-                    console.log('✅ Live2D 点击事件已绑定，点击小人即可朗读当前单词！');
+                    console.log('✅ Live2D ROI 点击检测已绑定');
                 } else {
                     console.warn('⚠️ 未找到 Live2D Canvas，尝试延迟绑定...');
-                    // 如果还没有加载，再等待一段时间
                     setTimeout(() => {
                         const canvas = document.querySelector('#oml2d-canvas');
                         if (canvas) {
-                            canvas.style.cursor = 'pointer';
-                            canvas.addEventListener('click', () => {
-                                console.log('🖱️ Live2D 被点击了！');
-                                window.speakWord();
+                            canvas.addEventListener('click', (event) => {
+                                try {
+                                    const rect = canvas.getBoundingClientRect();
+                                    const x = event.clientX - rect.left;
+                                    const y = event.clientY - rect.top;
+
+                                    const ROI = { x1: 270, y1: 265, x2: 400, y2: 450 };
+                                    const isInROI = x >= ROI.x1 && x <= ROI.x2 && y >= ROI.y1 && y <= ROI.y2;
+
+                                    if (isInROI) {
+                                        window.speakWord();
+                                    }
+                                } catch (error) {
+                                    console.error('❌ 点击检测出错:', error);
+                                }
                             });
-                            console.log('✅ Live2D 点击事件已绑定（延迟），点击小人即可朗读当前单词！');
+                            console.log('✅ Live2D ROI 点击检测已绑定（延迟）');
                         }
                     }, 3000);
                 }
             }, 2000);
+
+            // ==================== ROI 可视化调试工具 ====================
+            let roiDebugOverlay = null;
+
+            // 显示 ROI 边框（调试用）
+            window.showROI = function() {
+                const canvas = document.querySelector('#oml2d-canvas');
+                if (!canvas) {
+                    console.warn('⚠️ 未找到 Live2D Canvas');
+                    return;
+                }
+
+                const rect = canvas.getBoundingClientRect();
+
+                // ROI 定义（与点击检测保持一致）
+                const ROI = {
+                    x1: 270,
+                    y1: 265,
+                    x2: 400,
+                    y2: 450
+                };
+
+                // 创建覆盖层 div
+                if (!roiDebugOverlay) {
+                    roiDebugOverlay = document.createElement('div');
+                    roiDebugOverlay.id = 'roi-debug-overlay';
+                    document.body.appendChild(roiDebugOverlay);
+                }
+
+                // 设置覆盖层样式
+                roiDebugOverlay.style.position = 'fixed';
+                roiDebugOverlay.style.left = `${rect.left + ROI.x1}px`;
+                roiDebugOverlay.style.top = `${rect.top + ROI.y1}px`;
+                roiDebugOverlay.style.width = `${ROI.x2 - ROI.x1}px`;
+                roiDebugOverlay.style.height = `${ROI.y2 - ROI.y1}px`;
+                roiDebugOverlay.style.border = '3px solid red';
+                roiDebugOverlay.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
+                roiDebugOverlay.style.pointerEvents = 'none';
+                roiDebugOverlay.style.zIndex = '9999999';
+                roiDebugOverlay.style.boxSizing = 'border-box';
+
+                // 添加标签
+                roiDebugOverlay.innerHTML = `
+                    <div style="position: absolute; top: -25px; left: 0; background: red; color: white; padding: 2px 8px; font-size: 12px; font-family: monospace; white-space: nowrap;">
+                        ROI: (${ROI.x1}, ${ROI.y1}) → (${ROI.x2}, ${ROI.y2})
+                    </div>
+                `;
+
+                console.log('✅ ROI 边框已显示');
+                console.log('💡 调用 hideROI() 隐藏边框');
+                console.log('💡 调用 updateROI(x1, y1, x2, y2) 更新 ROI 区域');
+            };
+
+            // 隐藏 ROI 边框
+            window.hideROI = function() {
+                if (roiDebugOverlay) {
+                    roiDebugOverlay.remove();
+                    roiDebugOverlay = null;
+                    console.log('✅ ROI 边框已隐藏');
+                }
+            };
+
+            // 更新 ROI 区域（需要修改代码中的 ROI 值）
+            window.updateROI = function(x1, y1, x2, y2) {
+                console.log(`📝 更新 ROI: (${x1}, ${y1}) → (${x2}, ${y2})`);
+                console.log('⚠️ 注意：这只是预览，需要在代码中修改 ROI 值才能生效');
+
+                const canvas = document.querySelector('#oml2d-canvas');
+                if (!canvas) return;
+
+                const rect = canvas.getBoundingClientRect();
+
+                if (!roiDebugOverlay) {
+                    window.showROI();
+                }
+
+                // 更新覆盖层位置和大小
+                roiDebugOverlay.style.left = `${rect.left + x1}px`;
+                roiDebugOverlay.style.top = `${rect.top + y1}px`;
+                roiDebugOverlay.style.width = `${x2 - x1}px`;
+                roiDebugOverlay.style.height = `${y2 - y1}px`;
+
+                roiDebugOverlay.innerHTML = `
+                    <div style="position: absolute; top: -25px; left: 0; background: red; color: white; padding: 2px 8px; font-size: 12px; font-family: monospace; white-space: nowrap;">
+                        ROI: (${x1}, ${y1}) → (${x2}, ${y2})
+                    </div>
+                `;
+            };
+
+            console.log('💡 ROI 调试工具已加载:');
+            console.log('   - showROI() - 显示 ROI 边框');
+            console.log('   - hideROI() - 隐藏 ROI 边框');
+            console.log('   - updateROI(x1, y1, x2, y2) - 预览新的 ROI 区域');
+            // ==================== ROI 可视化结束 ====================
 
             // ==================== 音频缓存初始化和预加载 ====================
             // 初始化音频缓存
